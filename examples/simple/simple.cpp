@@ -129,6 +129,8 @@ int main(int argc, char ** argv) {
     sparams.no_perf = false;
     llama_sampler * smpl = llama_sampler_chain_init(sparams);
 
+    //added for testing prompt "What is bitcoin?:
+    //llama_sampler_chain_add(smpl, llama_sampler_init_penalties(64, 1.3f, 0.0f, 0.0f));
     llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
 
     // print the prompt token-by-token
