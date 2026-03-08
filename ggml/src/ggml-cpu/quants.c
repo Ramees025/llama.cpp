@@ -22,6 +22,10 @@
 
 #define UNUSED GGML_UNUSED
 
+void quantize_row_q4_hqq(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
+    quantize_row_q4_hqq_ref(x, y, k);
+}
+
 void quantize_row_q4_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
     quantize_row_q4_0_ref(x, y, k);
 }
@@ -111,6 +115,45 @@ void quantize_row_q8_K_generic(const float * GGML_RESTRICT x, void * GGML_RESTRI
 }
 
 //===================================== Dot products =================================
+
+// Q4_HQQ dot product: dequantize weights on the fly, accumulate against Q8_0 activations
+void ggml_vec_dot_q4_hqq_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    const int qk = QK8_0;
+    const int nb = n / qk;
+
+    assert(n % qk == 0);
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+
+    const block_q4_hqq * GGML_RESTRICT x = vx;
+    const block_q8_0   * GGML_RESTRICT y = vy;
+
+    float sumf = 0.0f;
+
+    for (int ib = 0; ib < nb; ++ib) {
+        const float scale  = GGML_CPU_FP16_TO_FP32(x[ib].scale);
+        const float zero   = GGML_CPU_FP16_TO_FP32(x[ib].zero);
+        const float iscale = scale > 1e-6f ? 1.0f / scale : 0.0f;
+        const float act_d  = GGML_CPU_FP16_TO_FP32(y[ib].d);
+
+        float block_sum = 0.0f;
+
+        for (int j = 0; j < qk/2; ++j) {
+            const int q0 = (x[ib].qs[j] & 0x0F);
+            const int q1 = (x[ib].qs[j] >>   4);
+
+            block_sum += (q0 - zero) * iscale * y[ib].qs[j];
+            block_sum += (q1 - zero) * iscale * y[ib].qs[j + qk/2];
+        }
+
+        sumf += block_sum * act_d;
+    }
+
+    *s = sumf;
+}
 
 void ggml_vec_dot_q4_0_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
     const int qk = QK8_0;

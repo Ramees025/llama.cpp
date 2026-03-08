@@ -99,6 +99,11 @@ struct mtmd_context_params {
     // callback function passed over to mtmd proper
     ggml_backend_sched_eval_callback cb_eval;
     void * cb_eval_user_data;
+
+    // explicit backend name for the mmproj (e.g. "cuda0", "metal", "cpu")
+    // when set, overrides use_gpu and selects this backend by name
+    // when NULL or empty, automatic selection applies (GPU if use_gpu, else CPU)
+    const char * backend_device;
 };
 
 MTMD_API const char * mtmd_default_marker(void);

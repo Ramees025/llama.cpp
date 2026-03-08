@@ -70,6 +70,73 @@ void quantize_row_q4_0_ref(const float * GGML_RESTRICT x, block_q4_0 * GGML_REST
     }
 }
 
+// Q4_HQQ: Half-Quadratic Quantization style 4-bit
+// scale = 15 / (max - min),  zero = -min * scale
+// q = clamp(round(w * scale + zero), 0, 15)
+void quantize_row_q4_hqq_ref(const float * GGML_RESTRICT x, block_q4_hqq * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK4_HQQ;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        float vmin =  FLT_MAX;
+        float vmax = -FLT_MAX;
+
+        for (int j = 0; j < qk; j++) {
+            const float v = x[i*qk + j];
+            if (v < vmin) vmin = v;
+            if (v > vmax) vmax = v;
+        }
+
+        const float range = vmax - vmin;
+        const float scale = range > 1e-6f ? 15.0f / range : 0.0f;
+        const float zero  = -vmin * scale;
+
+        y[i].scale = GGML_FP32_TO_FP16(scale);
+        y[i].zero  = GGML_FP32_TO_FP16(zero);
+
+        for (int j = 0; j < qk/2; j++) {
+            const float q0 = x[i*qk + j        ] * scale + zero;
+            const float q1 = x[i*qk + j + qk/2 ] * scale + zero;
+
+            const uint8_t xi0 = (uint8_t) MIN(15, (int)(q0 + 0.5f));
+            const uint8_t xi1 = (uint8_t) MIN(15, (int)(q1 + 0.5f));
+
+            y[i].qs[j] = xi0 | (xi1 << 4);
+        }
+    }
+}
+
+void dequantize_row_q4_hqq(const block_q4_hqq * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k) {
+    static const int qk = QK4_HQQ;
+
+    assert(k % qk == 0);
+
+    const int nb = k / qk;
+
+    for (int i = 0; i < nb; i++) {
+        const float scale = GGML_FP16_TO_FP32(x[i].scale);
+        const float zero  = GGML_FP16_TO_FP32(x[i].zero);
+        const float iscale = scale > 1e-6f ? 1.0f / scale : 0.0f;
+
+        for (int j = 0; j < qk/2; j++) {
+            const int q0 = (x[i].qs[j] & 0x0F);
+            const int q1 = (x[i].qs[j] >>   4);
+
+            y[i*qk + j        ] = (q0 - zero) * iscale;
+            y[i*qk + j + qk/2 ] = (q1 - zero) * iscale;
+        }
+    }
+}
+
+size_t quantize_q4_hqq(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrow, int64_t n_per_row, const float * imatrix) {
+    (void)imatrix; // no imatrix support for now, straightforward HQQ
+    quantize_row_q4_hqq_ref(src, dst, (int64_t)nrow * n_per_row);
+    return nrow * ggml_row_size(GGML_TYPE_Q4_HQQ, n_per_row);
+}
+
 void quantize_row_q4_1_ref(const float * GGML_RESTRICT x, block_q4_1 * GGML_RESTRICT y, int64_t k) {
     const int qk = QK4_1;
 
@@ -5200,6 +5267,10 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
                         return false;
                     }
                 }
+            } break;
+        case GGML_TYPE_Q4_HQQ:
+            {
+                VALIDATE_ROW_DATA_DM_F16_IMPL(block_q4_hqq, data, nb, scale, zero);
             } break;
         case GGML_TYPE_Q4_0:
             {

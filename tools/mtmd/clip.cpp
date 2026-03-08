@@ -165,12 +165,20 @@ struct clip_ctx {
         if (!backend_cpu) {
             throw std::runtime_error("failed to initialize CPU backend");
         }
-        if (ctx_params.use_gpu) {
+        // explicit backend selection via CLI flag takes highest priority
+        if (ctx_params.backend_device && ctx_params.backend_device[0] != '\0') {
+            backend = ggml_backend_init_by_name(ctx_params.backend_device, nullptr);
+            if (!backend) {
+                LOG_WRN("%s: Warning: Failed to initialize \"%s\" backend (from --mmproj-backend), falling back to auto selection\n", __func__, ctx_params.backend_device);
+            }
+        }
+        if (!backend && ctx_params.use_gpu) {
+            // check legacy env var as secondary override
             auto backend_name = std::getenv("MTMD_BACKEND_DEVICE");
             if (backend_name != nullptr) {
                 backend = ggml_backend_init_by_name(backend_name, nullptr);
                 if (!backend) {
-                    LOG_WRN("%s: Warning: Failed to initialize \"%s\" backend, falling back to default GPU backend\n", __func__, backend_name);
+                    LOG_WRN("%s: Warning: Failed to initialize \"%s\" backend (from MTMD_BACKEND_DEVICE), falling back to default GPU backend\n", __func__, backend_name);
                 }
             }
             if (!backend) {
